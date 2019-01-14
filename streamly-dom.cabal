@@ -23,6 +23,7 @@ cabal-version:       >= 1.10
 extra-source-files:
     Changelog.md
     README.md
+    cabal.project
 
 source-repository head
     type: git
