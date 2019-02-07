@@ -3,17 +3,8 @@ packages: streamly-dom.cabal
 
 source-repository-package
   type: git
-  location: https://github.com/ghcjs/ghcjs-base
-  tag: b8d51f65ae1921b2f031710bf75e17f216de442a
-
-source-repository-package
-  type: git
   location: https://github.com/composewell/streamly
   tag: ffe084ad40ab7e9733d7379e0b726c876d893537
-
-package ghcjs-base
-  tests: False
-  benchmarks: False
 
 package streamly
   tests: False

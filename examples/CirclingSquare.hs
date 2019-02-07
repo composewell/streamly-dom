@@ -65,7 +65,7 @@ playCirclingSquare = do
     cref <- newIORef (0,0)
     initTime <- getTime Monotonic
     initDom cref
-    runStream $ asyncly $ constRate 40 $
+    S.drain $ asyncly $ constRate 40 $
               S.repeatM (updateDisplay initTime cref)
 
 main :: JSM ()

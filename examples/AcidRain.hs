@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 -- This example is adapted from Gabriel Gonzalez's pipes-concurrency package.
@@ -9,134 +10,67 @@ module Main
 
 import Streamly
 import Streamly.Prelude as S
-import Control.Concurrent
-       (MVar, newEmptyMVar, putMVar, takeMVar, threadDelay)
-import Control.Monad (void, when)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State (StateT, MonadState, get, modify, runStateT, put)
-import Control.Monad.Reader (ask)
+import Control.Monad (void)
+import Control.Monad.State (MonadState, get, modify, runStateT)
 
-import GHCJS.DOM
-import GHCJS.DOM.Types
-import GHCJS.DOM.Window (promptUnchecked)
-import GHCJS.DOM.KeyboardEvent
-import GHCJS.DOM.Document
-import GHCJS.DOM.Element
-import GHCJS.DOM.HTMLInputElement
-import GHCJS.DOM.NonElementParentNode
-import GHCJS.DOM.Node
-import GHCJS.DOM.EventM
-import GHCJS.DOM.GlobalEventHandlers
-import GHCJS.DOM.HTMLHyperlinkElementUtils
+#if __GHCJS__
+import AcidRain.JSIO
+#else
+import AcidRain.StdIO
+#endif
 
-data GEvent = Quit | Harm Int | Heal Int deriving (Show)
+-------------------------------------------------------------------------------
+-- Streams
+-------------------------------------------------------------------------------
 
-setupDom :: MVar String -> JSM ()
-setupDom commandVar = do
-    Just doc <- currentDocument
-    Just body <- getBody doc
-    div <- uncheckedCastTo HTMLDivElement <$> createElement doc "div"
-    heading <-
-        uncheckedCastTo HTMLHeadingElement <$> do
-            h1 <- createElement doc "h1"
-            setAttribute h1 "id" "heading"
-            setInnerHTML h1 "Hello and Welcome to AcidRain"
-            return h1
-    appendChild_ div heading
-    info <-
-        uncheckedCastTo HTMLParagraphElement <$> do
-            p <- createElement doc "p"
-            setInnerHTML
-                p
-                "Your health is deteriorating due to acid rain,\
-             \ type \"potion\" or \"quit\""
-            return p
-    commandInput <-
-        uncheckedCastTo HTMLInputElement <$> do
-            input <- createElement doc "input"
-            setAttribute input "id" "commandInput"
-            setAttribute input "size" "8"
-            return input
-    _ <-
-        on commandInput keyUp $ do
-            ke <- ask
-            result <- getKey ke
-            when (result == "Enter") $ do
-                value <- getValue commandInput
-                liftIO $ putMVar commandVar value
-    healthStatus <-
-        uncheckedCastTo HTMLDivElement <$> do
-            primeDiv <- createElement doc "div"
-            setAttribute primeDiv "id" "healthStatus"
-            return primeDiv
-    commandErrorDiv <-
-        uncheckedCastTo HTMLDivElement <$> do
-            primeDiv <- createElement doc "div"
-            setAttribute primeDiv "id" "commandErrorDiv"
-            return primeDiv
+data GEvent = Quit | Harm Int | Heal Int | Unknown deriving (Show)
 
-    appendChild_ div info
-    appendChild_ div commandInput
-    appendChild_ div healthStatus
-    appendChild_ div commandErrorDiv
-    appendChild_ body div
-
-userAction :: MonadAsync m => MVar String -> SerialT m GEvent
-userAction commandVar = S.repeatM askUser
-  where
-    askUser = do
-        window <- currentWindowUnchecked
-        doc <- currentDocumentUnchecked
-        command <- liftIO $ takeMVar commandVar
-        case command of
-            "potion" -> return (Heal 10)
-            "harm" -> return (Harm 10)
-            "quit" -> return Quit
-            _ -> do
-                commandErrorDiv <-
-                    uncheckedCastTo HTMLDivElement <$>
-                    getElementByIdUnchecked doc "commandErrorDiv"
-                setInnerHTML commandErrorDiv "Type potion or harm or quit"
-                askUser
+parseCommand :: String -> GEvent
+parseCommand command =
+    case command of
+        "potion" -> Heal 10
+        "harm"   -> Harm 10
+        "quit"   -> Quit
+        _        -> Unknown
 
 acidRain :: MonadAsync m => SerialT m GEvent
 acidRain = asyncly $ constRate 1 $ S.repeatM $ return $ Harm 1
 
-data Result = Check | Done
+data Result = Check | Done | Error
 
-runEvents :: (MonadState Int m, MonadAsync m) => MVar String -> SerialT m Result
-runEvents commandVar = do
-    event <- (userAction commandVar) `parallel` acidRain
+runEvents :: (MonadState Int m, MonadAsync m) => SerialT m Result
+runEvents = do
+    event <- fmap parseCommand userStream `parallel` acidRain
     case event of
         Harm n -> modify (\h -> h - n) >> return Check
         Heal n -> modify (\h -> h + n) >> return Check
+        Unknown -> return Error
         Quit -> return Done
 
 data Status = Alive | GameOver deriving Eq
 
 getStatus :: (MonadState Int m, MonadAsync m) => Result -> m Status
 getStatus result = do
-    doc <- currentDocumentUnchecked
-    healthStatus <-
-        uncheckedCastTo HTMLDivElement <$>
-        getElementByIdUnchecked doc "healthStatus"
     case result of
-        Done -> setInnerHTML healthStatus "You quit!" >> return GameOver
+        Done -> printHealth "You quit!" >> return GameOver
+        Error -> printError "Type potion or harm or quit" >> return Alive
         Check -> do
             health <- get
             if (health <= 0)
-                then setInnerHTML healthStatus "You die!" >> return GameOver
-                else setInnerHTML healthStatus ("Health = " <> show health) >>
+                then printHealth "You die!" >> return GameOver
+                else printHealth ("Health = " <> show health) >>
                      return Alive
 
-letItRain :: JSM ()
+-------------------------------------------------------------------------------
+-- Game
+-------------------------------------------------------------------------------
+
+letItRain :: IO ()
 letItRain = do
-    commandVar <- newEmptyMVar
-    setupDom commandVar
-    syncPoint
+    initConsole
     let runGame =
-            S.runWhile (== Alive) $ S.mapM getStatus (runEvents commandVar)
+            S.drainWhile (== Alive) $ S.mapM getStatus runEvents
     void $ runStateT runGame 60
 
-main :: JSM ()
+main :: IO ()
 main = letItRain
